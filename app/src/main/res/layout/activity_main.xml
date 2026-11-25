@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<EditText xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/editor"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@null"
+    android:gravity="top|start"
+    android:inputType="textMultiLine|textNoSuggestions"
+    android:padding="12dp"
+    android:scrollbars="vertical"
+    android:textSize="15sp"
+    android:typeface="monospace" />

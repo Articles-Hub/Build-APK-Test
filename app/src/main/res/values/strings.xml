@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">TextEdit</string>
+    <string name="action_new">Mới</string>
+    <string name="action_open">Mở</string>
+    <string name="action_save">Lưu</string>
+    <string name="action_save_as">Lưu thành…</string>
+    <string name="untitled">Chưa đặt tên</string>
+    <string name="saved">Đã lưu</string>
+    <string name="save_failed">Không lưu được file</string>
+    <string name="open_failed">Không mở được file</string>
+    <string name="unsaved_title">Thay đổi chưa lưu</string>
+    <string name="unsaved_message">Bỏ các thay đổi chưa lưu?</string>
+    <string name="discard">Bỏ thay đổi</string>
+    <string name="cancel">Hủy</string>
+</resources>
