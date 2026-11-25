@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">TextEdit</string>
+
+    <string name="action_new">Mới</string>
+    <string name="action_open">Mở</string>
+    <string name="action_save">Lưu</string>
+    <string name="action_save_as">Lưu thành…</string>
+    <string name="action_settings">Cài đặt</string>
+
+    <string name="untitled">Chưa đặt tên</string>
+    <string name="saved">Đã lưu</string>
+    <string name="save_failed">Không lưu được file</string>
+    <string name="open_failed">Không mở được file</string>
+    <string name="unsaved_title">Thay đổi chưa lưu</string>
+    <string name="unsaved_message">Bỏ các thay đổi chưa lưu?</string>
+    <string name="discard">Bỏ thay đổi</string>
+    <string name="cancel">Hủy</string>
+    <string name="close">Đóng</string>
+
+    <string name="tb_paste">Dán</string>
+    <string name="tb_copy">Sao chép</string>
+    <string name="tb_undo">Hoàn tác</string>
+    <string name="tb_redo">Làm lại</string>
+    <string name="tb_search">Tìm</string>
+    <string name="tb_run">Thực hiện</string>
+    <string name="tb_close">Đóng file</string>
+
+    <string name="pp_select_all">Chọn tất cả</string>
+    <string name="pp_cut">Cắt</string>
+    <string name="pp_indent">Tăng thụt lề</string>
+    <string name="pp_outdent">Giảm thụt lề</string>
+
+    <string name="search_hint">Nội dung cần tìm</string>
+    <string name="search_next">Tìm tiếp</string>
+    <string name="search_not_found">Không tìm thấy</string>
+
+    <string name="run_as">Chạy dưới dạng</string>
+    <string name="run_output">Kết quả</string>
+    <string name="run_no_output">(không có kết quả)</string>
+
+    <string name="set_font">Phông chữ</string>
+    <string name="set_font_size">Cỡ chữ</string>
+    <string name="set_text_color">Màu chữ</string>
+    <string name="set_background">Hình nền</string>
+    <string name="set_overlay">Độ mờ nền sau chữ</string>
+    <string name="set_language">Ngôn ngữ</string>
+    <string name="set_toolbar">Thanh công cụ mini</string>
+    <string name="set_wrap">Cắt dòng</string>
+    <string name="set_line_numbers">Số dòng</string>
+
+    <string name="font_custom">Chọn file font…</string>
+    <string name="font_load_failed">Không tải được font này</string>
+
+    <string name="bg_none">Không</string>
+    <string name="bg_color">Màu đơn sắc</string>
+    <string name="bg_image">Ảnh</string>
+    <string name="bg_video">Video</string>
+    <string name="bg_image_file">Ảnh từ file</string>
+    <string name="bg_image_url">Ảnh từ link</string>
+    <string name="bg_video_file">Video từ file</string>
+    <string name="bg_video_url">Video từ link</string>
+    <string name="bg_enter_url">Dán link (https://…)</string>
+    <string name="bg_download_failed">Không tải được ảnh (chỉ hỗ trợ link https)</string>
+
+    <string name="lang_system">Mặc định hệ thống</string>
+</resources>
