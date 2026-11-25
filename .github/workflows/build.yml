@@ -2,11 +2,18 @@ name: Build APK
 
 on:
   push:
+    branches: [main]
   workflow_dispatch:
+
+# Cần quyền ghi để tạo tag và Release
+permissions:
+  contents: write
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      VERSION: v1.0.${{ github.run_number }}
     steps:
       - uses: actions/checkout@v4
 
@@ -24,7 +31,20 @@ jobs:
       - name: Build debug APK
         run: gradle assembleDebug
 
+      - name: Rename APK
+        run: cp app/build/outputs/apk/debug/app-debug.apk "TextEdit-${VERSION}.apk"
+
       - uses: actions/upload-artifact@v4
         with:
           name: TextEdit-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: TextEdit-${{ env.VERSION }}.apk
+
+      # Tự tạo tag + Release và đính kèm APK để tải trực tiếp
+      - name: Create tag and release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${VERSION}" "TextEdit-${VERSION}.apk" \
+            --target "${GITHUB_SHA}" \
+            --title "TextEdit ${VERSION}" \
+            --generate-notes

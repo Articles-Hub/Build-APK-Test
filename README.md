@@ -4,7 +4,10 @@ Tính năng: tạo mới, mở, lưu, lưu thành (UTF-8), cảnh báo khi có t
 và có thể mở file `text/*` từ trình quản lý file. Không cần xin quyền bộ nhớ
 (dùng Storage Access Framework), không có thư viện ngoài.
 
-## Cách 1: Build bằng GitHub (không cần cài gì)
+## Cách 1: Tải APK từ Releases (tự động)
+Mỗi lần push lên `main`, GitHub tự build và tạo tag `v1.0.N` cùng một Release có sẵn file APK. Vào tab **Releases** của repo để tải.
+
+## Cách 1b: Build bằng GitHub Actions
 1. Tạo repo GitHub mới, upload toàn bộ thư mục này (giữ cả thư mục `.github`).
 2. Vào tab **Actions** → workflow **Build APK** → chạy (hoặc đợi tự chạy sau khi push).
 3. Khi xong, tải artifact **TextEdit-debug-apk** → giải nén ra `app-debug.apk`.
