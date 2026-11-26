@@ -31,7 +31,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 
-/** Màn hình cài đặt: font, hình nền, ngôn ngữ, thanh công cụ, cắt dòng, số dòng. */
+/** Màn hình cài đặt: giao diện, font, hình nền, ngôn ngữ, soạn thảo, trình biên dịch online. */
 public class SettingsActivity extends Activity {
 
     private static final int REQ_FONT = 10;
@@ -66,6 +66,7 @@ public class SettingsActivity extends Activity {
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+        Prefs.applyTheme(this);
         super.onCreate(savedInstanceState);
         setTitle(R.string.action_settings);
         p = Prefs.get(this);
@@ -79,19 +80,108 @@ public class SettingsActivity extends Activity {
 
     private void build() {
         list.removeAllViews();
+        row(R.string.set_theme, themeName(), 0, v -> pickTheme());
         row(R.string.set_font, fontName(), 0, v -> pickFont());
         row(R.string.set_font_size, p.getInt(Prefs.FONT_SIZE, 15) + " sp", 0, v -> pickSize());
-        row(R.string.set_text_color, "████", p.getInt(Prefs.TEXT_COLOR, Color.BLACK), v ->
-                colorDialog(R.string.set_text_color, c -> {
-                    p.edit().putInt(Prefs.TEXT_COLOR, c).apply();
-                    build();
-                }));
+        if (p.contains(Prefs.TEXT_COLOR)) {
+            row(R.string.set_text_color, "████", p.getInt(Prefs.TEXT_COLOR, Color.BLACK), v -> pickTextColor());
+        } else {
+            row(R.string.set_text_color, getString(R.string.color_auto), 0, v -> pickTextColor());
+        }
         row(R.string.set_background, bgName(), 0, v -> pickBackground());
         row(R.string.set_overlay, p.getInt(Prefs.OVERLAY, 0) + "%", 0, v -> pickOverlay());
         row(R.string.set_language, langName(), 0, v -> pickLanguage());
         toggle(R.string.set_toolbar, Prefs.TOOLBAR, true);
         toggle(R.string.set_wrap, Prefs.WRAP, true);
         toggle(R.string.set_line_numbers, Prefs.LINES, false);
+        toggle(R.string.set_highlight, Prefs.HIGHLIGHT, true);
+        toggle(R.string.set_auto_indent, Prefs.AUTOINDENT, true);
+        row(R.string.set_tab_size, p.getInt(Prefs.TAB_SIZE, 4) + "", 0, v -> pickTabSize());
+        row(R.string.set_compiler_url, p.getString(Prefs.COMPILER_URL, Prefs.DEFAULT_COMPILER), 0,
+                v -> askText(R.string.set_compiler_url, Prefs.COMPILER_URL, Prefs.DEFAULT_COMPILER, false));
+        String tok = p.getString(Prefs.COMPILER_TOKEN, "");
+        row(R.string.set_compiler_token, tok.isEmpty() ? getString(R.string.compiler_token_none)
+                        : getString(R.string.compiler_token_set), 0,
+                v -> askText(R.string.set_compiler_token, Prefs.COMPILER_TOKEN, "", true));
+    }
+
+    // ---------- Giao diện sáng/tối, thụt lề, trình biên dịch ----------
+
+    private static final String[] THEME_KEYS = {"system", "light", "dark"};
+
+    private String themeName() {
+        String t = p.getString(Prefs.THEME, "system");
+        if ("light".equals(t)) return getString(R.string.theme_light);
+        if ("dark".equals(t)) return getString(R.string.theme_dark);
+        return getString(R.string.theme_system);
+    }
+
+    private void pickTheme() {
+        String[] items = {getString(R.string.theme_system), getString(R.string.theme_light),
+                getString(R.string.theme_dark)};
+        new AlertDialog.Builder(this)
+                .setTitle(R.string.set_theme)
+                .setItems(items, (d, which) -> {
+                    p.edit().putString(Prefs.THEME, THEME_KEYS[which]).apply();
+                    recreate();
+                })
+                .show();
+    }
+
+    private void pickTextColor() {
+        String[] items = {getString(R.string.color_auto), getString(R.string.color_choose)};
+        new AlertDialog.Builder(this)
+                .setTitle(R.string.set_text_color)
+                .setItems(items, (d, which) -> {
+                    if (which == 0) {
+                        p.edit().remove(Prefs.TEXT_COLOR).apply();
+                        build();
+                    } else {
+                        colorDialog(R.string.set_text_color, c -> {
+                            p.edit().putInt(Prefs.TEXT_COLOR, c).apply();
+                            build();
+                        });
+                    }
+                })
+                .show();
+    }
+
+    private void pickTabSize() {
+        final int[] sizes = {2, 3, 4, 6, 8};
+        String[] items = new String[sizes.length];
+        for (int i = 0; i < sizes.length; i++) items[i] = String.valueOf(sizes[i]);
+        new AlertDialog.Builder(this)
+                .setTitle(R.string.set_tab_size)
+                .setItems(items, (d, which) -> {
+                    p.edit().putInt(Prefs.TAB_SIZE, sizes[which]).apply();
+                    build();
+                })
+                .show();
+    }
+
+    private void askText(int titleRes, final String key, final String def, boolean secret) {
+        final EditText in = new EditText(this);
+        in.setSingleLine(true);
+        in.setInputType(secret
+                ? InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD
+                : InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
+        in.setText(p.getString(key, def));
+        new AlertDialog.Builder(this)
+                .setTitle(titleRes)
+                .setView(in)
+                .setPositiveButton(android.R.string.ok, (d, w) -> {
+                    String v = in.getText().toString().trim();
+                    if (v.isEmpty()) v = def;
+                    if (key.equals(Prefs.COMPILER_URL) && !v.toLowerCase(Locale.ROOT).startsWith("https://")
+                            && !v.toLowerCase(Locale.ROOT).startsWith("http://")) {
+                        Toast.makeText(this, R.string.compiler_url_invalid, Toast.LENGTH_LONG).show();
+                        return;
+                    }
+                    p.edit().putString(key, v).apply();
+                    build();
+                })
+                .setNegativeButton(R.string.cancel, null)
+                .show();
     }
 
     // ---------- Dựng giao diện ----------

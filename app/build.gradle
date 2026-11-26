@@ -24,8 +24,17 @@ android {
         sourceCompatibility JavaVersion.VERSION_1_8
         targetCompatibility JavaVersion.VERSION_1_8
     }
+
+    packaging {
+        resources {
+            excludes += ['META-INF/versions/**', 'META-INF/DEPENDENCIES', 'META-INF/LICENSE*', 'META-INF/NOTICE*', 'META-INF/INDEX.LIST']
+        }
+    }
 }
 
-// Không dùng thư viện ngoài: app chỉ dựa vào Android framework.
 dependencies {
+    // FTP / FTPS
+    implementation 'commons-net:commons-net:3.9.0'
+    // SFTP (bản fork có bảo trì của JSch)
+    implementation 'com.github.mwiede:jsch:0.2.19'
 }

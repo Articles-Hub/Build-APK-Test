@@ -2,22 +2,54 @@
 <menu xmlns:android="http://schemas.android.com/apk/res/android">
     <item
         android:id="@+id/action_save"
-        android:title="@string/action_save"
-        android:showAsAction="ifRoom" />
+        android:showAsAction="ifRoom"
+        android:title="@string/action_save" />
     <item
         android:id="@+id/action_open"
-        android:title="@string/action_open"
-        android:showAsAction="ifRoom" />
+        android:showAsAction="ifRoom"
+        android:title="@string/action_open" />
     <item
         android:id="@+id/action_new"
-        android:title="@string/action_new"
-        android:showAsAction="never" />
+        android:showAsAction="never"
+        android:title="@string/action_new_tab" />
     <item
         android:id="@+id/action_save_as"
-        android:title="@string/action_save_as"
-        android:showAsAction="never" />
+        android:showAsAction="never"
+        android:title="@string/action_save_as" />
+    <item
+        android:id="@+id/action_open_remote"
+        android:showAsAction="never"
+        android:title="@string/action_open_remote" />
+    <item
+        android:id="@+id/action_open_root"
+        android:showAsAction="never"
+        android:title="@string/action_open_root" />
+    <item
+        android:id="@+id/action_find"
+        android:showAsAction="never"
+        android:title="@string/action_find" />
+    <item
+        android:id="@+id/action_goto"
+        android:showAsAction="never"
+        android:title="@string/action_goto" />
+    <item
+        android:id="@+id/action_encoding"
+        android:showAsAction="never"
+        android:title="@string/action_encoding" />
+    <item
+        android:id="@+id/action_color"
+        android:showAsAction="never"
+        android:title="@string/action_color" />
+    <item
+        android:id="@+id/action_preview"
+        android:showAsAction="never"
+        android:title="@string/preview" />
+    <item
+        android:id="@+id/action_run_online"
+        android:showAsAction="never"
+        android:title="@string/action_run_online" />
     <item
         android:id="@+id/action_settings"
-        android:title="@string/action_settings"
-        android:showAsAction="never" />
+        android:showAsAction="never"
+        android:title="@string/action_settings" />
 </menu>
