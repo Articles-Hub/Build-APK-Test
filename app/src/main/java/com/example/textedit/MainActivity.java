@@ -1,5 +1,6 @@
 package com.example.textedit;
 
+import android.app.ActionBar;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.ClipData;
@@ -15,8 +16,14 @@ import android.graphics.Typeface;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.os.SystemClock;
+import android.os.storage.StorageManager;
+import android.os.storage.StorageVolume;
+import android.provider.DocumentsContract;
 import android.text.Editable;
 import android.text.InputFilter;
 import android.text.InputType;
@@ -26,19 +33,21 @@ import android.text.TextUtils;
 import android.text.TextWatcher;
 import android.util.DisplayMetrics;
 import android.util.TypedValue;
+import android.view.ActionMode;
 import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.inputmethod.InputMethodManager;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.HorizontalScrollView;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
-import android.widget.PopupWindow;
+import android.widget.PopupMenu;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.ToggleButton;
@@ -49,7 +58,9 @@ import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.Charset;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 import java.util.regex.Matcher;
@@ -64,6 +75,8 @@ public class MainActivity extends Activity {
 
     private static final int REQ_OPEN = 1;
     private static final int REQ_SAVE_AS = 2;
+    private static final int MENU_INDENT = 9001;
+    private static final int MENU_OUTDENT = 9002;
     private static final int MAX_FILE = 12 * 1024 * 1024;
     private static final Pattern HEX_COLOR = Pattern.compile("#[0-9a-fA-F]{6}\\b|#[0-9a-fA-F]{3}\\b");
 
@@ -88,6 +101,44 @@ public class MainActivity extends Activity {
     private TextView statusLang;
     private TextView statusEnc;
     private HighlightController hl;
+    private SearchHighlighter sh;
+    private SideDrawer drawer;
+    private ToggleButton tgWord;
+    private View replaceRow;
+    private LinearLayout drawerList;
+
+    private boolean black;
+    private boolean autoPair = true;
+    private boolean tabSpaces = true;
+    private boolean restoreEnabled = true;
+    private boolean autoSave;
+    private int undoState = -1;
+    private int pendingCaret = -1;
+    private int pendingDeleteAt = -1;
+    private char pendingDeleteChar;
+    private final Handler uiHandler = new Handler(Looper.getMainLooper());
+    private final Runnable caretTask = new Runnable() {
+        @Override
+        public void run() {
+            if (pendingCaret >= 0 && pendingCaret <= editor.length()) editor.setSelection(pendingCaret);
+            pendingCaret = -1;
+        }
+    };
+    private final Runnable deleteTask = new Runnable() {
+        @Override
+        public void run() {
+            int at = pendingDeleteAt;
+            pendingDeleteAt = -1;
+            Editable e = editor.getText();
+            if (at >= 0 && at < e.length() && e.charAt(at) == pendingDeleteChar) edit(at, at + 1, "");
+        }
+    };
+    private final Runnable sessionTask = new Runnable() {
+        @Override
+        public void run() {
+            saveSession();
+        }
+    };
 
     private boolean dark;
     private String cfgAtCreate = "";
@@ -98,8 +149,6 @@ public class MainActivity extends Activity {
     private boolean autoIndent = true;
     private int tabSize = 4;
     private String hlKey = "";
-    private float lastX;
-    private float lastY;
     private String lastStdin = "";
 
     @Override
@@ -117,7 +166,12 @@ public class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
         cfgAtCreate = Prefs.configKey(this);
         dark = Prefs.isDark(this);
+        black = Prefs.isBlack(this);
         setContentView(R.layout.activity_main);
+        drawer = (SideDrawer) findViewById(R.id.drawer);
+        drawerList = (LinearLayout) findViewById(R.id.drawer_list);
+        tgWord = (ToggleButton) findViewById(R.id.tg_word);
+        replaceRow = findViewById(R.id.replace_row);
 
         editor = (LineNumberEditText) findViewById(R.id.editor);
         bgRoot = (FrameLayout) findViewById(R.id.bg_root);
@@ -137,10 +191,12 @@ public class MainActivity extends Activity {
         statusEnc = (TextView) findViewById(R.id.status_enc);
 
         hl = new HighlightController(editor);
+        sh = new SearchHighlighter(editor);
         editor.setListener(new LineNumberEditText.Listener() {
             @Override
             public void onScroll() {
                 hl.onScroll();
+                sh.onScrollChanged();
             }
 
             @Override
@@ -148,29 +204,20 @@ public class MainActivity extends Activity {
                 updateStatus();
             }
         });
-        editor.setFilters(new InputFilter[]{autoIndentFilter});
+        editor.setFilters(new InputFilter[]{readOnlyFilter, autoPairFilter, autoIndentFilter});
+        installSelectionMenu();
         editor.addTextChangedListener(watcher);
-
-        editor.setOnTouchListener(new View.OnTouchListener() {
-            @Override
-            public boolean onTouch(View v, MotionEvent e) {
-                if (e.getActionMasked() == MotionEvent.ACTION_DOWN) {
-                    lastX = e.getX();
-                    lastY = e.getY();
-                }
-                return false;
-            }
-        });
-        editor.setOnLongClickListener(new View.OnLongClickListener() {
-            @Override
-            public boolean onLongClick(View v) {
-                showMiniPopup();
-                return true;
-            }
-        });
 
         buildToolbar();
         setupSearchPanel();
+        buildDrawer();
+        ActionBar ab = getActionBar();
+        if (ab != null) {
+            ab.setDisplayHomeAsUpEnabled(true);
+            ab.setHomeAsUpIndicator(R.drawable.ic_menu);
+            if (black) ab.setBackgroundDrawable(new ColorDrawable(Color.BLACK));
+        }
+        if (black) getWindow().setBackgroundDrawable(new ColorDrawable(Color.BLACK));
         statusPos.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -190,8 +237,17 @@ public class MainActivity extends Activity {
             }
         });
 
+        restoreEnabled = Prefs.get(this).getBoolean(Prefs.RESTORE, true);
+        if (sDocs.isEmpty() && restoreEnabled) {
+            int[] curOut = new int[1];
+            ArrayList<Doc> restored = Session.load(this, curOut);
+            if (restored != null) {
+                sDocs.addAll(restored);
+                sCur = curOut[0];
+            }
+        }
         if (sDocs.isEmpty()) {
-            sDocs.add(new Doc());
+            sDocs.add(newDoc());
             sCur = 0;
         }
         sCur = Math.max(0, Math.min(sCur, sDocs.size() - 1));
@@ -238,15 +294,22 @@ public class MainActivity extends Activity {
     protected void onPause() {
         super.onPause();
         stashCurrent();
+        if (autoSave) autoSaveFiles();
+        uiHandler.removeCallbacks(sessionTask);
+        saveSession();
         if (bgVideo.isPlaying()) bgVideo.pause();
     }
 
     @Override
     protected void onDestroy() {
         super.onDestroy();
+        uiHandler.removeCallbacks(sessionTask);
+        uiHandler.removeCallbacks(caretTask);
+        uiHandler.removeCallbacks(deleteTask);
         if (isFinishing()) {
             sDocs.clear();
             sCur = 0;
+            if (!restoreEnabled) Session.clearAsync(getApplicationContext());
         }
     }
 
@@ -261,9 +324,42 @@ public class MainActivity extends Activity {
     }
 
     @Override
+    public boolean onPrepareOptionsMenu(Menu menu) {
+        Doc d = cur();
+        MenuItem u = menu.findItem(R.id.action_undo);
+        MenuItem r = menu.findItem(R.id.action_redo);
+        if (u != null) {
+            u.setEnabled(d.undo.canUndo());
+            if (u.getIcon() != null) u.getIcon().mutate().setAlpha(d.undo.canUndo() ? 255 : 90);
+        }
+        if (r != null) {
+            r.setEnabled(d.undo.canRedo());
+            if (r.getIcon() != null) r.getIcon().mutate().setAlpha(d.undo.canRedo() ? 255 : 90);
+        }
+        MenuItem ro = menu.findItem(R.id.action_readonly);
+        if (ro != null) ro.setChecked(d.readOnly);
+        return super.onPrepareOptionsMenu(menu);
+    }
+
+    @Override
     public boolean onOptionsItemSelected(MenuItem item) {
         int id = item.getItemId();
-        if (id == R.id.action_new) {
+        if (id == android.R.id.home) {
+            refreshDrawer();
+            drawer.toggle();
+        } else if (id == R.id.action_undo) {
+            undo();
+        } else if (id == R.id.action_redo) {
+            redo();
+        } else if (id == R.id.action_syntax) {
+            chooseLanguage();
+        } else if (id == R.id.action_stats) {
+            showStats();
+        } else if (id == R.id.action_timestamp) {
+            insertTimestamp();
+        } else if (id == R.id.action_readonly) {
+            toggleReadOnly();
+        } else if (id == R.id.action_new) {
             newTab();
         } else if (id == R.id.action_open) {
             pickFile();
@@ -271,10 +367,6 @@ public class MainActivity extends Activity {
             save();
         } else if (id == R.id.action_save_as) {
             saveAs();
-        } else if (id == R.id.action_open_remote) {
-            openRemote();
-        } else if (id == R.id.action_open_root) {
-            openRoot();
         } else if (id == R.id.action_find) {
             showSearch(false);
         } else if (id == R.id.action_goto) {
@@ -297,8 +389,17 @@ public class MainActivity extends Activity {
 
     @Override
     public void onBackPressed() {
+        if (drawer.isOpen()) {
+            drawer.close();
+            return;
+        }
         if (searchPanel.getVisibility() == View.VISIBLE) {
-            searchPanel.setVisibility(View.GONE);
+            hideSearch();
+            return;
+        }
+        if (restoreEnabled) {
+            // Các thẻ (kể cả phần chưa lưu) được giữ lại và mở lại ở lần vào app sau.
+            finish();
             return;
         }
         int dirtyCount = 0;
@@ -384,7 +485,7 @@ public class MainActivity extends Activity {
                 findNext(!shift);
                 return true;
             } else if (k == KeyEvent.KEYCODE_ESCAPE && searchPanel.getVisibility() == View.VISIBLE) {
-                searchPanel.setVisibility(View.GONE);
+                hideSearch();
                 return true;
             }
         }
@@ -398,6 +499,10 @@ public class MainActivity extends Activity {
         boolean multi = text.substring(a, b).indexOf('\n') >= 0;
         if (shift || multi) {
             shiftIndent(!shift);
+            return;
+        }
+        if (!tabSpaces) {
+            edit(a, b, "\t");
             return;
         }
         int ls = text.lastIndexOf('\n', a - 1) + 1;
@@ -444,14 +549,27 @@ public class MainActivity extends Activity {
         }
         configureHighlight(true);
         lastDirty = d.dirty();
+        editor.setShowSoftInputOnFocus(!d.readOnly);
+        undoState = -1;
+        invalidateOptionsMenu();
         updateTitle();
         updateStatus();
         renderTabs();
+        updateSearchHighlight();
+        scheduleSession();
+    }
+
+    /** Thẻ trống mới, dùng bảng mã và kiểu xuống dòng mặc định trong Cài đặt. */
+    private Doc newDoc() {
+        SharedPreferences p = Prefs.get(this);
+        Doc d = new Doc();
+        d.charset = Encodings.forName(p.getString(Prefs.DEFAULT_ENC, "UTF-8"));
+        d.eol = Eol.fromKey(p.getString(Prefs.DEFAULT_EOL, "lf"));
+        return d;
     }
 
     private void newTab() {
-        Doc d = new Doc();
-        addDoc(d);
+        addDoc(newDoc());
     }
 
     private void addDoc(Doc d) {
@@ -490,11 +608,12 @@ public class MainActivity extends Activity {
         boolean wasCur = idx == sCur;
         sDocs.remove(idx);
         if (sDocs.isEmpty()) {
-            sDocs.add(new Doc());
+            sDocs.add(newDoc());
             sCur = 0;
             showDoc(cur());
             return;
         }
+        scheduleSession();
         if (idx < sCur) {
             sCur--;
         } else if (wasCur) {
@@ -526,8 +645,8 @@ public class MainActivity extends Activity {
     private void renderTabs() {
         tabRow.removeAllViews();
         int fg = dark ? 0xFFE0E0E0 : 0xFF212121;
-        int selBg = dark ? 0xFF3C3F41 : 0xFFDDDDDD;
-        tabScroll.setBackgroundColor(dark ? 0xFF2B2B2B : 0xFFF2F2F2);
+        int selBg = black ? 0xFF2A2A2A : dark ? 0xFF3C3F41 : 0xFFDDDDDD;
+        tabScroll.setBackgroundColor(black ? 0xFF000000 : dark ? 0xFF2B2B2B : 0xFFF2F2F2);
         View selected = null;
         for (int i = 0; i < sDocs.size(); i++) {
             final int idx = i;
@@ -540,7 +659,7 @@ public class MainActivity extends Activity {
                 selected = tab;
             }
             TextView t = new TextView(this);
-            t.setText((d.dirty() ? "● " : "") + d.title(getString(R.string.untitled)));
+            t.setText((d.dirty() ? "● " : "") + (d.readOnly ? "🔒 " : "") + d.title(getString(R.string.untitled)));
             t.setTextColor(fg);
             t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
             t.setSingleLine(true);
@@ -550,7 +669,15 @@ public class MainActivity extends Activity {
             t.setOnClickListener(new View.OnClickListener() {
                 @Override
                 public void onClick(View v) {
-                    switchTo(idx);
+                    if (idx == sCur) showTabMenu(v, idx);
+                    else switchTo(idx);
+                }
+            });
+            t.setOnLongClickListener(new View.OnLongClickListener() {
+                @Override
+                public boolean onLongClick(View v) {
+                    showTabMenu(v, idx);
+                    return true;
                 }
             });
             TextView x = new TextView(this);
@@ -591,18 +718,77 @@ public class MainActivity extends Activity {
         }
     }
 
+    private void showTabMenu(View anchor, final int idx) {
+        PopupMenu pm = new PopupMenu(this, anchor);
+        pm.getMenu().add(0, 1, 0, R.string.tab_close);
+        pm.getMenu().add(0, 2, 1, R.string.tab_close_others).setEnabled(sDocs.size() > 1);
+        pm.getMenu().add(0, 3, 2, R.string.tab_close_all);
+        pm.setOnMenuItemClickListener(new PopupMenu.OnMenuItemClickListener() {
+            @Override
+            public boolean onMenuItemClick(MenuItem item) {
+                if (item.getItemId() == 1) closeTab(idx);
+                else if (item.getItemId() == 2) closeMany(idx);
+                else closeMany(-1);
+                return true;
+            }
+        });
+        pm.show();
+    }
+
+    /** Đóng mọi thẻ trừ thẻ keepIdx (hoặc đóng tất cả nếu keepIdx < 0), có hỏi nếu có thẻ chưa lưu. */
+    private void closeMany(int keepIdx) {
+        final Doc keep = keepIdx >= 0 && keepIdx < sDocs.size() ? sDocs.get(keepIdx) : null;
+        int dirty = 0;
+        for (Doc d : sDocs) if (d != keep && d.dirty()) dirty++;
+        final Runnable go = new Runnable() {
+            @Override
+            public void run() {
+                stashCurrent();
+                sDocs.clear();
+                if (keep != null) {
+                    sDocs.add(keep);
+                } else {
+                    sDocs.add(newDoc());
+                }
+                sCur = 0;
+                showDoc(cur());
+            }
+        };
+        if (dirty == 0) {
+            go.run();
+            return;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle(R.string.unsaved_title)
+                .setMessage(getString(R.string.unsaved_exit, dirty))
+                .setPositiveButton(R.string.discard, new android.content.DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(android.content.DialogInterface di, int w) {
+                        go.run();
+                    }
+                })
+                .setNegativeButton(R.string.cancel, null)
+                .show();
+    }
+
     private void refreshDirty() {
-        boolean d = cur().dirty();
+        Doc c = cur();
+        boolean d = c.dirty();
         if (d != lastDirty) {
             lastDirty = d;
             renderTabs();
             updateTitle();
         }
+        int us = (c.undo.canUndo() ? 1 : 0) | (c.undo.canRedo() ? 2 : 0);
+        if (us != undoState) {
+            undoState = us;
+            invalidateOptionsMenu();
+        }
     }
 
     private void updateTitle() {
         Doc d = cur();
-        setTitle((d.dirty() ? "* " : "") + d.title(getString(R.string.untitled)));
+        setTitle((d.dirty() ? "* " : "") + (d.readOnly ? "🔒 " : "") + d.title(getString(R.string.untitled)));
     }
 
     private void updateStatus() {
@@ -643,15 +829,25 @@ public class MainActivity extends Activity {
             if (loading || restoring) return;
             cur().undo.record(pStart, pOld, pNew, SystemClock.uptimeMillis());
             refreshDirty();
+            scheduleSession();
+            if (searchPanel.getVisibility() == View.VISIBLE) sh.schedule();
         }
     };
 
+    private boolean blockedByReadOnly() {
+        if (!cur().readOnly) return false;
+        Toast.makeText(this, R.string.readonly_blocked, Toast.LENGTH_SHORT).show();
+        return true;
+    }
+
     private void undo() {
+        if (blockedByReadOnly()) return;
         UndoStack.Op op = cur().undo.undo();
         if (op != null) applyOp(op.start, op.newText.length(), op.oldText);
     }
 
     private void redo() {
+        if (blockedByReadOnly()) return;
         UndoStack.Op op = cur().undo.redo();
         if (op != null) applyOp(op.start, op.oldText.length(), op.newText);
     }
@@ -668,10 +864,13 @@ public class MainActivity extends Activity {
         }
         scrollIntoView(start + insert.length());
         refreshDirty();
+        scheduleSession();
+        if (searchPanel.getVisibility() == View.VISIBLE) sh.schedule();
     }
 
     /** Sửa văn bản bằng mã (vẫn được ghi vào lịch sử hoàn tác, nhưng không tự thụt lề). */
     private void edit(int a, int b, CharSequence replacement) {
+        if (blockedByReadOnly()) return;
         programmatic = true;
         try {
             editor.getText().replace(Math.min(a, b), Math.max(a, b), replacement);
@@ -684,6 +883,47 @@ public class MainActivity extends Activity {
     // Tự động thụt lề và định dạng
     // =====================================================================
 
+    private final InputFilter readOnlyFilter = new InputFilter() {
+        @Override
+        public CharSequence filter(CharSequence source, int start, int end, Spanned dest, int dstart, int dend) {
+            if (loading || sDocs.isEmpty() || !cur().readOnly) return null;
+            return dest.subSequence(dstart, dend); // giữ nguyên văn bản
+        }
+    };
+
+    /** Tự đóng cặp ( [ { " ' ` — quy tắc nằm trong AutoPair. */
+    private final InputFilter autoPairFilter = new InputFilter() {
+        @Override
+        public CharSequence filter(CharSequence source, int start, int end, Spanned dest, int dstart, int dend) {
+            if (!autoPair || loading || restoring || programmatic) return null;
+            if (end - start == 1) {
+                char c = source.charAt(start);
+                int act = AutoPair.onType(dest, dstart, dend, c, cur().lang() != null);
+                if (act == AutoPair.PAIR) {
+                    pendingCaret = dstart + 1;
+                    uiHandler.post(caretTask);
+                    return String.valueOf(c) + AutoPair.closer(c);
+                }
+                if (act == AutoPair.SKIP) {
+                    pendingCaret = dend + 1;
+                    uiHandler.post(caretTask);
+                    return "";
+                }
+                return null;
+            }
+            if (end == start && AutoPair.deletesEmptyPair(dest, dstart, dend)) {
+                pendingDeleteAt = dstart;
+                pendingDeleteChar = AutoPair.closer(dest.charAt(dstart));
+                uiHandler.post(deleteTask);
+            }
+            return null;
+        }
+    };
+
+    private String indentUnit() {
+        return tabSpaces ? spaces(tabSize) : "\t";
+    }
+
     private final InputFilter autoIndentFilter = new InputFilter() {
         @Override
         public CharSequence filter(CharSequence source, int start, int end, Spanned dest, int dstart, int dend) {
@@ -693,8 +933,9 @@ public class MainActivity extends Activity {
             while (ls > 0 && dest.charAt(ls - 1) != '\n') ls--;
             int k = ls;
             while (k < dstart && (dest.charAt(k) == ' ' || dest.charAt(k) == '\t')) k++;
+            String base = dest.subSequence(ls, k).toString();
             StringBuilder indent = new StringBuilder("\n");
-            indent.append(dest.subSequence(ls, k));
+            indent.append(base);
             int p = dstart - 1;
             while (p >= ls && (dest.charAt(p) == ' ' || dest.charAt(p) == '\t')) p--;
             if (p >= ls) {
@@ -706,11 +947,59 @@ public class MainActivity extends Activity {
                     extra = n.equals("Python") || n.equals("YAML") || n.equals("Nim") || n.equals("CoffeeScript")
                             || n.equals("Cython") || n.equals("Elm");
                 }
-                if (extra) indent.append(spaces(tabSize));
+                if (extra) {
+                    String unit = indentUnit();
+                    boolean between = AutoPair.isBracketOpen(last) && p == dstart - 1
+                            && dend < dest.length() && dest.charAt(dend) == AutoPair.closer(last);
+                    indent.append(unit);
+                    if (between) {
+                        // Enter giữa { } : đưa dấu đóng xuống dòng riêng, con trỏ ở dòng thụt vào.
+                        pendingCaret = dstart + indent.length();
+                        uiHandler.post(caretTask);
+                        indent.append('\n').append(base);
+                    }
+                }
             }
             return indent.toString();
         }
     };
+
+    /** Menu nổi khi chọn chữ (tay cầm giọt nước, kính lúp là của Android): thêm Thụt vào / Thụt ra. */
+    private void installSelectionMenu() {
+        ActionMode.Callback cb = new ActionMode.Callback() {
+            @Override
+            public boolean onCreateActionMode(ActionMode mode, Menu menu) {
+                menu.add(0, MENU_INDENT, 100, R.string.pp_indent);
+                menu.add(0, MENU_OUTDENT, 101, R.string.pp_outdent);
+                return true;
+            }
+
+            @Override
+            public boolean onPrepareActionMode(ActionMode mode, Menu menu) {
+                return false;
+            }
+
+            @Override
+            public boolean onActionItemClicked(ActionMode mode, MenuItem item) {
+                if (item.getItemId() == MENU_INDENT) {
+                    shiftIndent(true);
+                    return true;
+                }
+                if (item.getItemId() == MENU_OUTDENT) {
+                    shiftIndent(false);
+                    return true;
+                }
+                return false;
+            }
+
+            @Override
+            public void onDestroyActionMode(ActionMode mode) {
+                // không cần dọn gì
+            }
+        };
+        editor.setCustomSelectionActionModeCallback(cb);
+        if (Build.VERSION.SDK_INT >= 23) editor.setCustomInsertionActionModeCallback(cb);
+    }
 
     private static String spaces(int n) {
         StringBuilder sb = new StringBuilder();
@@ -733,7 +1022,7 @@ public class MainActivity extends Activity {
         int end = text.indexOf('\n', le);
         if (end < 0) end = text.length();
 
-        String pad = spaces(tabSize);
+        String pad = indentUnit();
         String[] lines = text.substring(ls, end).split("\n", -1);
         StringBuilder sb = new StringBuilder();
         int firstDelta = 0;
@@ -769,25 +1058,31 @@ public class MainActivity extends Activity {
 
         editor.setTypeface(loadTypeface(p));
         editor.setTextSize(TypedValue.COMPLEX_UNIT_SP, p.getInt(Prefs.FONT_SIZE, 15));
+        editor.setLineSpacing(0f, Math.max(10, Math.min(20, p.getInt(Prefs.LINE_SPACING, 10))) / 10f);
+        editor.setShowWhitespace(p.getBoolean(Prefs.SHOW_WS, false));
 
         int textColor = p.getInt(Prefs.TEXT_COLOR, Prefs.defaultTextColor(this));
         editor.setTextColor(textColor);
         boolean lightText = HighlightController.isLight(textColor);
-        int base = lightText ? Color.BLACK : Color.WHITE;
+        int base = lightText ? (black ? Color.BLACK : 0xFF1E1E1E) : Color.WHITE;
 
         int alpha = Math.max(0, Math.min(100, p.getInt(Prefs.OVERLAY, 0))) * 255 / 100;
         editor.setBackgroundColor(Color.argb(alpha, Color.red(base), Color.green(base), Color.blue(base)));
-        editor.setGutterColor(lightText ? 0xFF1E1E1E : 0xFFF2F2F2);
+        editor.setGutterColor(lightText ? (black ? 0xFF0A0A0A : 0xFF262626) : 0xFFF2F2F2);
 
         editor.setHorizontallyScrolling(!p.getBoolean(Prefs.WRAP, true));
         editor.setShowLineNumbers(p.getBoolean(Prefs.LINES, false));
         editor.refreshGutter();
 
         autoIndent = p.getBoolean(Prefs.AUTOINDENT, true);
+        autoPair = p.getBoolean(Prefs.AUTOPAIR, true);
+        tabSpaces = p.getBoolean(Prefs.TAB_SPACES, true);
+        autoSave = p.getBoolean(Prefs.AUTOSAVE, false);
+        restoreEnabled = p.getBoolean(Prefs.RESTORE, true);
         tabSize = Math.max(1, p.getInt(Prefs.TAB_SIZE, 4));
 
         // Màu các thanh theo giao diện sáng/tối.
-        int barBg = dark ? 0xFF2B2B2B : 0xFFF2F2F2;
+        int barBg = black ? 0xFF000000 : dark ? 0xFF2B2B2B : 0xFFF2F2F2;
         int barFg = dark ? 0xFFE0E0E0 : 0xFF212121;
         toolbar.setBackgroundColor(barBg);
         statusBar.setBackgroundColor(barBg);
@@ -800,6 +1095,7 @@ public class MainActivity extends Activity {
 
         configureHighlight(false);
         renderTabs();
+        refreshDrawer();
 
         // Hình nền
         String type = p.getString(Prefs.BG_TYPE, "none");
@@ -1041,32 +1337,75 @@ public class MainActivity extends Activity {
         findViewById(R.id.btn_search_close).setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                searchPanel.setVisibility(View.GONE);
+                hideSearch();
             }
         });
+        findViewById(R.id.btn_expand).setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                replaceRow.setVisibility(replaceRow.getVisibility() == View.VISIBLE ? View.GONE : View.VISIBLE);
+            }
+        });
+        // Tô sáng mọi kết quả ngay khi gõ hoặc khi đổi tùy chọn.
+        findInput.addTextChangedListener(new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int st, int c, int a) { }
+
+            @Override
+            public void onTextChanged(CharSequence s, int st, int b, int c) { }
+
+            @Override
+            public void afterTextChanged(Editable e) {
+                updateSearchHighlight();
+            }
+        });
+        android.widget.CompoundButton.OnCheckedChangeListener opt = new android.widget.CompoundButton.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(android.widget.CompoundButton b, boolean checked) {
+                updateSearchHighlight();
+            }
+        };
+        tgCase.setOnCheckedChangeListener(opt);
+        tgRegex.setOnCheckedChangeListener(opt);
+        tgWord.setOnCheckedChangeListener(opt);
+    }
+
+    private void hideSearch() {
+        searchPanel.setVisibility(View.GONE);
+        sh.clear();
+    }
+
+    private void updateSearchHighlight() {
+        if (sh == null) return;
+        if (searchPanel.getVisibility() != View.VISIBLE) {
+            sh.clear();
+            return;
+        }
+        sh.setPattern(buildPattern(true));
     }
 
     private void showSearch(boolean focusReplace) {
         searchPanel.setVisibility(View.VISIBLE);
+        if (focusReplace) replaceRow.setVisibility(View.VISIBLE);
         int a = Math.min(editor.getSelectionStart(), editor.getSelectionEnd());
         int b = Math.max(editor.getSelectionStart(), editor.getSelectionEnd());
         if (a >= 0 && b > a && b - a < 200 && editor.getText().subSequence(a, b).toString().indexOf('\n') < 0) {
             findInput.setText(editor.getText().subSequence(a, b).toString());
         }
         (focusReplace ? replaceInput : findInput).requestFocus();
+        updateSearchHighlight();
     }
 
     private Pattern buildPattern() {
-        String q = findInput.getText().toString();
-        if (q.isEmpty()) return null;
-        int flags = 0;
-        if (!tgCase.isChecked()) flags |= Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE;
-        if (tgRegex.isChecked()) flags |= Pattern.MULTILINE;
-        else flags |= Pattern.LITERAL;
+        return buildPattern(false);
+    }
+
+    private Pattern buildPattern(boolean quiet) {
         try {
-            return Pattern.compile(q, flags);
+            return Finder.build(findInput.getText().toString(), tgCase.isChecked(), tgRegex.isChecked(),
+                    tgWord.isChecked());
         } catch (PatternSyntaxException e) {
-            Toast.makeText(this, String.valueOf(e.getDescription()), Toast.LENGTH_SHORT).show();
+            if (!quiet) Toast.makeText(this, String.valueOf(e.getDescription()), Toast.LENGTH_SHORT).show();
             return null;
         }
     }
@@ -1238,7 +1577,15 @@ public class MainActivity extends Activity {
     // =====================================================================
 
     private void pickFile() {
+        pickFileAt(null);
+    }
+
+    /** Mở trình chọn file của Android, bắt đầu từ vị trí initial (Android 8+; máy cũ bỏ qua). */
+    private void pickFileAt(Uri initial) {
         Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        if (initial != null && Build.VERSION.SDK_INT >= 26) {
+            i.putExtra(DocumentsContract.EXTRA_INITIAL_URI, initial);
+        }
         i.addCategory(Intent.CATEGORY_OPENABLE);
         i.setType("*/*");
         i.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
@@ -1283,6 +1630,7 @@ public class MainActivity extends Activity {
     private static final class Loaded {
         String text;
         Encodings.Result enc;
+        String eol; // kiểu xuống dòng gốc của file (null nếu file không có dòng nào)
     }
 
     /** Đọc file ở luồng nền, nhận diện bảng mã, rồi mở trong một thẻ mới. */
@@ -1303,7 +1651,9 @@ public class MainActivity extends Activity {
                 if (data.length > MAX_FILE) throw new IOException(getString(R.string.too_large));
                 Loaded l = new Loaded();
                 l.enc = Encodings.detect(data);
-                l.text = Encodings.decode(data, l.enc.charset, l.enc.bomLength);
+                String raw = Encodings.decode(data, l.enc.charset, l.enc.bomLength);
+                l.eol = Eol.detect(raw);
+                l.text = Eol.normalize(raw);
                 return l;
             }
         }, new Net.Done<Loaded>() {
@@ -1314,12 +1664,15 @@ public class MainActivity extends Activity {
                             getString(R.string.open_failed) + ": " + err.getMessage(), Toast.LENGTH_LONG).show();
                     return;
                 }
-                Doc d = new Doc();
+                Doc d = newDoc();
                 d.backend = b;
                 d.text = l.text;
                 d.charset = l.enc.charset;
                 d.bom = l.enc.bomLength > 0;
+                if (l.eol != null) d.eol = l.eol;
+                Recent.add(MainActivity.this, b);
                 addDoc(d);
+                refreshDrawer();
             }
         });
     }
@@ -1334,7 +1687,12 @@ public class MainActivity extends Activity {
     }
 
     private void doSave(final Doc d, final Backend b, String message) {
+        doSave(d, b, message, false);
+    }
+
+    private void doSave(final Doc d, final Backend b, String message, final boolean silent) {
         if (b.wantsMessage() && message == null) {
+            if (silent) return; // Git cần lời nhắn commit nên không tự lưu
             final EditText in = new EditText(this);
             in.setText(getString(R.string.commit_default, d.title(getString(R.string.untitled))));
             new AlertDialog.Builder(this)
@@ -1350,7 +1708,7 @@ public class MainActivity extends Activity {
                     .show();
             return;
         }
-        final String text = textOf(d);
+        final String text = Eol.apply(textOf(d), d.eol);
         final byte[] data = Encodings.encode(text, d.charset, d.bom);
         final Object token = d.undo.token();
         final String msg = message;
@@ -1364,6 +1722,7 @@ public class MainActivity extends Activity {
             @Override
             public void done(Boolean ok, Exception err) {
                 if (err != null) {
+                    if (silent) return;
                     new AlertDialog.Builder(MainActivity.this)
                             .setTitle(R.string.save_failed)
                             .setMessage(String.valueOf(err.getMessage()))
@@ -1374,14 +1733,19 @@ public class MainActivity extends Activity {
                 d.backend = b;
                 d.undo.markSavedAt(token);
                 d.encodingChanged = false;
-                Toast.makeText(MainActivity.this, R.string.saved, Toast.LENGTH_SHORT).show();
-                if (d == cur()) {
+                d.forceDirty = false;
+                Recent.add(MainActivity.this, b);
+                if (isDestroyed()) return;
+                if (!silent) Toast.makeText(MainActivity.this, R.string.saved, Toast.LENGTH_SHORT).show();
+                if (sDocs.contains(d) && d == cur()) {
                     lastDirty = d.dirty();
                     configureHighlight(true);
                     updateTitle();
                     updateStatus();
                 }
                 renderTabs();
+                refreshDrawer();
+                scheduleSession();
             }
         });
     }
@@ -1472,8 +1836,9 @@ public class MainActivity extends Activity {
     // Máy chủ từ xa, Git và root
     // =====================================================================
 
-    private void openRemote() {
-        RemoteUi.connect(this, false, new RemoteUi.ConnectListener() {
+    /** Mở file từ máy chủ: 0 FTP, 1 FTPS, 2 SFTP, 3 GitHub, 4 GitLab. */
+    private void openRemoteType(int type) {
+        RemoteUi.connect(this, false, type, new RemoteUi.ConnectListener() {
             @Override
             public void onFile(RemoteFs fs, String path) {
                 openBackend(new Backends.Remote(fs, path));
@@ -1487,6 +1852,10 @@ public class MainActivity extends Activity {
     }
 
     private void withRoot(final Runnable then) {
+        if (!Prefs.get(this).getBoolean(Prefs.ROOT, false)) {
+            Toast.makeText(this, R.string.root_disabled, Toast.LENGTH_LONG).show();
+            return;
+        }
         Net.run(new Net.Task<Boolean>() {
             @Override
             public Boolean call() {
@@ -1534,7 +1903,8 @@ public class MainActivity extends Activity {
         String[] items = {
                 getString(R.string.enc_reopen),
                 getString(R.string.enc_save_as),
-                getString(R.string.enc_bom, d.bom ? "ON" : "OFF")};
+                getString(R.string.enc_bom, d.bom ? "ON" : "OFF"),
+                getString(R.string.enc_eol, Eol.label(d.eol))};
         new AlertDialog.Builder(this)
                 .setTitle(getString(R.string.action_encoding) + ": " + d.encodingLabel())
                 .setItems(items, new android.content.DialogInterface.OnClickListener() {
@@ -1542,11 +1912,31 @@ public class MainActivity extends Activity {
                     public void onClick(android.content.DialogInterface di, int which) {
                         if (which == 0) pickEncoding(true);
                         else if (which == 1) pickEncoding(false);
+                        else if (which == 3) pickEol();
                         else {
                             d.bom = !d.bom;
                             d.encodingChanged = true;
                             afterEncodingChange();
                         }
+                    }
+                })
+                .show();
+    }
+
+    private void pickEol() {
+        final String[] values = {Eol.LF, Eol.CRLF, Eol.CR};
+        String[] items = {"LF (Unix, Android, macOS)", "CRLF (Windows)", "CR (Mac cũ)"};
+        new AlertDialog.Builder(this)
+                .setTitle(R.string.eol_pick)
+                .setItems(items, new android.content.DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(android.content.DialogInterface di, int which) {
+                        Doc d = cur();
+                        if (!values[which].equals(d.eol)) {
+                            d.eol = values[which];
+                            d.encodingChanged = true;
+                        }
+                        afterEncodingChange();
                     }
                 })
                 .show();
@@ -1598,7 +1988,9 @@ public class MainActivity extends Activity {
                         int skip = det.bomLength > 0 && det.charset.equals(cs) ? det.bomLength : 0;
                         Loaded l = new Loaded();
                         l.enc = new Encodings.Result(cs, skip);
-                        l.text = Encodings.decode(data, cs, skip);
+                        String raw = Encodings.decode(data, cs, skip);
+                        l.eol = Eol.detect(raw);
+                        l.text = Eol.normalize(raw);
                         return l;
                     }
                 }, new Net.Done<Loaded>() {
@@ -1610,7 +2002,9 @@ public class MainActivity extends Activity {
                         }
                         d.charset = cs;
                         d.bom = l.enc.bomLength > 0;
+                        if (l.eol != null) d.eol = l.eol;
                         d.encodingChanged = false;
+                        d.forceDirty = false;
                         d.undo.clear();
                         d.text = l.text;
                         d.selStart = 0;
@@ -1827,84 +2221,285 @@ public class MainActivity extends Activity {
     }
 
     // =====================================================================
-    // Menu mini khi nhấn giữ
+    // Thống kê, thời gian, chỉ đọc
     // =====================================================================
 
-    private void showMiniPopup() {
-        editor.requestFocus();
-        boolean hasSelection = editor.getSelectionStart() != editor.getSelectionEnd();
-        if (!hasSelection) {
-            int off = editor.getOffsetForPosition(lastX, lastY);
-            if (off >= 0) editor.setSelection(off);
-        }
-
-        String text = editor.getText().toString();
+    private void showStats() {
+        final Doc d = cur();
+        final String all = editor.getText().toString();
         int a = Math.max(0, Math.min(editor.getSelectionStart(), editor.getSelectionEnd()));
         int b = Math.max(0, Math.max(editor.getSelectionStart(), editor.getSelectionEnd()));
-        int ls = text.lastIndexOf('\n', a - 1) + 1;
-        int le = text.indexOf('\n', b);
-        if (le < 0) le = text.length();
-        boolean nearText = !text.substring(ls, le).trim().isEmpty();
-
-        ClipboardManager cm = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
-        boolean canPaste = cm != null && cm.hasPrimaryClip();
-
-        final PopupWindow[] pw = new PopupWindow[1];
-        LinearLayout box = new LinearLayout(this);
-        box.setOrientation(LinearLayout.HORIZONTAL);
-        GradientDrawable bg = new GradientDrawable();
-        bg.setColor(0xF0303030);
-        bg.setCornerRadius(dp(8));
-        box.setBackground(bg);
-        box.setPadding(dp(4), dp(2), dp(4), dp(2));
-
-        if (canPaste) addPopupItem(box, pw, R.string.tb_paste, new Runnable() { public void run() { pasteText(); } });
-        addPopupItem(box, pw, R.string.pp_select_all, new Runnable() { public void run() { editor.selectAll(); } });
-        if (hasSelection) {
-            addPopupItem(box, pw, R.string.tb_copy, new Runnable() { public void run() { copyText(); } });
-            addPopupItem(box, pw, R.string.pp_cut, new Runnable() { public void run() { cutText(); } });
-        }
-        if (nearText) {
-            addPopupItem(box, pw, R.string.pp_indent, new Runnable() { public void run() { shiftIndent(true); } });
-            addPopupItem(box, pw, R.string.pp_outdent, new Runnable() { public void run() { shiftIndent(false); } });
-        }
-
-        HorizontalScrollView hs = new HorizontalScrollView(this);
-        hs.setHorizontalScrollBarEnabled(false);
-        hs.addView(box);
-
-        DisplayMetrics dm = getResources().getDisplayMetrics();
-        box.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED);
-        int width = Math.min(box.getMeasuredWidth(), dm.widthPixels - dp(16));
-        int height = box.getMeasuredHeight();
-
-        pw[0] = new PopupWindow(hs, width, height, true);
-        pw[0].setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
-        pw[0].setOutsideTouchable(true);
-
-        int[] loc = new int[2];
-        editor.getLocationOnScreen(loc);
-        int x = loc[0] + (int) lastX - width / 2;
-        x = Math.max(dp(8), Math.min(x, dm.widthPixels - width - dp(8)));
-        int y = loc[1] + (int) lastY - height - dp(28);
-        if (y < dp(8)) y = loc[1] + (int) lastY + dp(28);
-        pw[0].showAtLocation(editor, Gravity.NO_GRAVITY, x, y);
+        final String sel = b > a ? all.substring(a, b) : null;
+        Net.run(new Net.Task<Object[]>() {
+            @Override
+            public Object[] call() {
+                TextStats all1 = TextStats.of(all);
+                int bytes = Encodings.encode(Eol.apply(all, d.eol), d.charset, d.bom).length;
+                return new Object[]{all1, bytes, sel == null ? null : TextStats.of(sel)};
+            }
+        }, new Net.Done<Object[]>() {
+            @Override
+            public void done(Object[] r, Exception err) {
+                if (err != null || r == null || isDestroyed()) return;
+                TextStats st = (TextStats) r[0];
+                int bytes = (Integer) r[1];
+                TextStats ss = (TextStats) r[2];
+                StringBuilder sb = new StringBuilder();
+                sb.append(d.title(getString(R.string.untitled))).append('\n')
+                        .append(d.encodingLabel()).append("\n\n");
+                sb.append(getString(R.string.stats_body, st.lines, st.words, st.chars, st.charsNoSpace,
+                        android.text.format.Formatter.formatShortFileSize(MainActivity.this, bytes), bytes));
+                if (ss != null) {
+                    sb.append("\n\n").append(getString(R.string.stats_selection, ss.chars, ss.words, ss.lines));
+                }
+                new AlertDialog.Builder(MainActivity.this)
+                        .setTitle(R.string.action_stats)
+                        .setMessage(sb.toString())
+                        .setPositiveButton(R.string.close, null)
+                        .show();
+            }
+        });
     }
 
-    private void addPopupItem(LinearLayout box, final PopupWindow[] pw, int labelRes, final Runnable action) {
-        TextView tv = new TextView(this);
-        tv.setText(labelRes);
-        tv.setTextColor(Color.WHITE);
-        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
-        tv.setPadding(dp(12), dp(10), dp(12), dp(10));
-        tv.setOnClickListener(new View.OnClickListener() {
+    private void insertTimestamp() {
+        int a = Math.max(0, Math.min(editor.getSelectionStart(), editor.getSelectionEnd()));
+        int b = Math.max(0, Math.max(editor.getSelectionStart(), editor.getSelectionEnd()));
+        String ts = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(new Date());
+        edit(a, b, ts);
+        editor.setSelection(a + ts.length());
+    }
+
+    private void toggleReadOnly() {
+        Doc d = cur();
+        d.readOnly = !d.readOnly;
+        editor.setShowSoftInputOnFocus(!d.readOnly);
+        if (d.readOnly) {
+            InputMethodManager imm = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
+            if (imm != null) imm.hideSoftInputFromWindow(editor.getWindowToken(), 0);
+        }
+        updateTitle();
+        renderTabs();
+        invalidateOptionsMenu();
+        scheduleSession();
+        Toast.makeText(this, d.readOnly ? R.string.readonly_on : R.string.readonly_off, Toast.LENGTH_SHORT).show();
+    }
+
+    // =====================================================================
+    // Lưu / khôi phục phiên làm việc và tự lưu
+    // =====================================================================
+
+    /** Lưu phiên sau khi ngừng gõ vài giây (để mất điện hay bị tắt đột ngột vẫn còn bản sửa dở). */
+    private void scheduleSession() {
+        if (!restoreEnabled) return;
+        uiHandler.removeCallbacks(sessionTask);
+        uiHandler.postDelayed(sessionTask, 4000);
+    }
+
+    private void saveSession() {
+        if (sDocs.isEmpty() || editor == null) return;
+        Context app = getApplicationContext();
+        if (!restoreEnabled) {
+            Session.clearAsync(app);
+            return;
+        }
+        stashCurrent();
+        Session.saveAsync(app, Session.capture(sDocs, sCur));
+    }
+
+    /** Tự lưu các file đã mở từ thiết bị/đám mây/root khi rời app (máy chủ và Git cần xác nhận nên bỏ qua). */
+    private void autoSaveFiles() {
+        for (Doc d : new ArrayList<>(sDocs)) {
+            if (!d.dirty() || d.backend == null || d.readOnly) continue;
+            if (d.backend instanceof Backends.Saf || d.backend instanceof Backends.Root) {
+                doSave(d, d.backend, null, true);
+            }
+        }
+    }
+
+    // =====================================================================
+    // Ngăn kéo bên trái
+    // =====================================================================
+
+    private void buildDrawer() {
+        refreshDrawer();
+    }
+
+    private void refreshDrawer() {
+        if (drawerList == null) return;
+        int fg = dark ? 0xFFE0E0E0 : 0xFF212121;
+        int sub = dark ? 0xFF9E9E9E : 0xFF757575;
+        int bg = black ? 0xFF000000 : dark ? 0xFF2B2B2B : 0xFFFFFFFF;
+        findViewById(R.id.drawer_panel).setBackgroundColor(bg);
+        drawerList.removeAllViews();
+
+        TextView title = new TextView(this);
+        title.setText(R.string.app_name);
+        title.setTextColor(fg);
+        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 22);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        title.setPadding(dp(20), dp(28), dp(20), dp(12));
+        drawerList.addView(title);
+
+        drawerHeader(R.string.drawer_recent, sub);
+        final List<Recent.Entry> recents = Recent.list(this);
+        if (recents.isEmpty()) {
+            TextView none = new TextView(this);
+            none.setText(R.string.drawer_recent_empty);
+            none.setTextColor(sub);
+            none.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+            none.setPadding(dp(20), dp(6), dp(20), dp(10));
+            drawerList.addView(none);
+        } else {
+            int shown = Math.min(8, recents.size());
+            for (int i = 0; i < shown; i++) {
+                final Recent.Entry e = recents.get(i);
+                drawerItem((e.type.equals("root") ? "⚙ " : "") + e.name, fg, new Runnable() {
+                    @Override
+                    public void run() {
+                        openRecent(e);
+                    }
+                });
+            }
+            drawerItem(getString(R.string.drawer_clear), sub, new Runnable() {
+                @Override
+                public void run() {
+                    Recent.clear(MainActivity.this);
+                    refreshDrawer();
+                }
+            }, false);
+        }
+
+        drawerHeader(R.string.drawer_storage, sub);
+        drawerItem(getString(R.string.drawer_internal), fg, new Runnable() {
+            @Override
+            public void run() {
+                pickFileAt(primaryStorageUri());
+            }
+        });
+        drawerItem(getString(R.string.drawer_sd), fg, new Runnable() {
+            @Override
+            public void run() {
+                openSdCard();
+            }
+        });
+        drawerItem(getString(R.string.drawer_root), fg, new Runnable() {
+            @Override
+            public void run() {
+                openRoot();
+            }
+        });
+
+        drawerHeader(R.string.drawer_cloud, sub);
+        drawerItem(getString(R.string.drawer_drive), fg, cloud("com.google.android.apps.docs", R.string.drawer_drive));
+        drawerItem(getString(R.string.drawer_dropbox), fg, cloud("com.dropbox.android", R.string.drawer_dropbox));
+        drawerItem(getString(R.string.drawer_onedrive), fg, cloud("com.microsoft.skydrive", R.string.drawer_onedrive));
+
+        drawerHeader(R.string.drawer_servers, sub);
+        drawerItem(getString(R.string.drawer_ftp), fg, server(0));
+        drawerItem(getString(R.string.drawer_sftp), fg, server(2));
+        drawerItem(getString(R.string.drawer_github), fg, server(3));
+        drawerItem(getString(R.string.drawer_gitlab), fg, server(4));
+
+        drawerHeader(R.string.action_settings, sub);
+        drawerItem(getString(R.string.action_settings), fg, new Runnable() {
+            @Override
+            public void run() {
+                startActivity(new Intent(MainActivity.this, SettingsActivity.class));
+            }
+        });
+    }
+
+    private Runnable server(final int type) {
+        return new Runnable() {
+            @Override
+            public void run() {
+                openRemoteType(type);
+            }
+        };
+    }
+
+    private Runnable cloud(final String pkg, final int nameRes) {
+        return new Runnable() {
+            @Override
+            public void run() {
+                String name = getString(nameRes);
+                try {
+                    getPackageManager().getPackageInfo(pkg, 0);
+                } catch (Exception e) {
+                    Toast.makeText(MainActivity.this, getString(R.string.cloud_not_installed, name),
+                            Toast.LENGTH_LONG).show();
+                    return;
+                }
+                Toast.makeText(MainActivity.this, getString(R.string.cloud_hint, name), Toast.LENGTH_LONG).show();
+                pickFile();
+            }
+        };
+    }
+
+    private void drawerHeader(int textRes, int color) {
+        TextView h = new TextView(this);
+        h.setText(textRes);
+        h.setTextColor(color);
+        h.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        h.setTypeface(Typeface.DEFAULT_BOLD);
+        h.setAllCaps(true);
+        h.setPadding(dp(20), dp(18), dp(20), dp(4));
+        drawerList.addView(h);
+    }
+
+    private void drawerItem(String text, int color, Runnable action) {
+        drawerItem(text, color, action, true);
+    }
+
+    private void drawerItem(String text, int color, final Runnable action, boolean closeDrawer) {
+        TextView t = new TextView(this);
+        t.setText(text);
+        t.setTextColor(color);
+        t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+        t.setSingleLine(true);
+        t.setEllipsize(TextUtils.TruncateAt.MIDDLE);
+        t.setPadding(dp(20), dp(12), dp(20), dp(12));
+        t.setBackgroundResource(android.R.drawable.list_selector_background);
+        final boolean close = closeDrawer;
+        t.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                if (pw[0] != null) pw[0].dismiss();
+                if (close) drawer.close();
                 action.run();
             }
         });
-        box.addView(tv);
+        drawerList.addView(t);
+    }
+
+    private void openRecent(Recent.Entry e) {
+        if (e.type.equals("root") && !Prefs.get(this).getBoolean(Prefs.ROOT, false)) {
+            Toast.makeText(this, R.string.root_disabled, Toast.LENGTH_LONG).show();
+            return;
+        }
+        Backend b = Recent.make(this, e.type, e.ref);
+        if (b != null) openBackend(b);
+    }
+
+    private static final String STORAGE_AUTHORITY = "com.android.externalstorage.documents";
+
+    private Uri primaryStorageUri() {
+        return DocumentsContract.buildDocumentUri(STORAGE_AUTHORITY, "primary:");
+    }
+
+    private void openSdCard() {
+        if (Build.VERSION.SDK_INT >= 24) {
+            StorageManager sm = (StorageManager) getSystemService(Context.STORAGE_SERVICE);
+            if (sm != null) {
+                for (StorageVolume v : sm.getStorageVolumes()) {
+                    String uuid = v.getUuid();
+                    if (v.isRemovable() && !v.isPrimary() && uuid != null) {
+                        pickFileAt(DocumentsContract.buildDocumentUri(STORAGE_AUTHORITY, uuid + ":"));
+                        return;
+                    }
+                }
+            }
+        }
+        Toast.makeText(this, R.string.no_sd, Toast.LENGTH_LONG).show();
     }
 
     private int dp(int v) {

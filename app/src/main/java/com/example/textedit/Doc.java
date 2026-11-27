@@ -9,7 +9,10 @@ final class Doc {
     String text = "";                // nội dung (chỉ đáng tin khi thẻ không phải thẻ đang mở)
     Charset charset = Charset.forName("UTF-8");
     boolean bom;
-    boolean encodingChanged;         // đổi bảng mã/BOM nhưng chưa lưu
+    boolean encodingChanged;         // đổi bảng mã/BOM/kiểu xuống dòng nhưng chưa lưu
+    boolean forceDirty;              // khôi phục từ phiên cũ khi còn thay đổi chưa lưu (lịch sử hoàn tác không được giữ)
+    boolean readOnly;                // chế độ chỉ đọc
+    String eol = Eol.LF;             // kiểu xuống dòng khi lưu
     int selStart;
     int selEnd;
     int scrollY;
@@ -17,7 +20,7 @@ final class Doc {
     final UndoStack undo = new UndoStack();
 
     boolean dirty() {
-        return undo.isDirty() || encodingChanged;
+        return undo.isDirty() || encodingChanged || forceDirty;
     }
 
     String title(String untitled) {
@@ -43,6 +46,6 @@ final class Doc {
 
     String encodingLabel() {
         String n = charset.name();
-        return bom ? n + " BOM" : n;
+        return (bom ? n + " BOM" : n) + " " + Eol.label(eol);
     }
 }

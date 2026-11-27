@@ -30,6 +30,16 @@ final class Prefs {
     static final String COMPILER_TOKEN = "compiler_token";
     static final String COMPILER_OK = "compiler_consent"; // máy chủ compiler đã được người dùng đồng ý
     static final String DEFAULT_COMPILER = "https://ce.judge0.com";
+    static final String LINE_SPACING = "line_spacing";  // phần mười: 10 = 1.0x ... 20 = 2.0x
+    static final String SHOW_WS = "show_whitespace";
+    static final String TAB_SPACES = "tab_spaces";      // Tab chèn dấu cách thay vì ký tự Tab
+    static final String AUTOPAIR = "auto_pair";
+    static final String AUTOSAVE = "auto_save";
+    static final String DEFAULT_ENC = "default_encoding";
+    static final String DEFAULT_EOL = "default_eol";    // lf | crlf | cr
+    static final String RESTORE = "restore_tabs";
+    static final String ROOT = "root_enabled";
+    static final String RECENT = "recent_files";
 
     private Prefs() { }
 
@@ -50,11 +60,16 @@ final class Prefs {
 
     static boolean isDark(Context c) {
         String t = get(c).getString(THEME, "system");
-        if ("dark".equals(t)) return true;
+        if ("dark".equals(t) || "amoled".equals(t)) return true;
         if ("light".equals(t)) return false;
         // Dùng cấu hình hệ thống để luôn phản ánh chế độ sáng/tối hiện tại của thiết bị.
         int ui = Resources.getSystem().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK;
         return ui == Configuration.UI_MODE_NIGHT_YES;
+    }
+
+    /** Giao diện tối nền đen tuyền (tiết kiệm pin trên màn hình AMOLED). */
+    static boolean isBlack(Context c) {
+        return "amoled".equals(get(c).getString(THEME, "system"));
     }
 
     /** Gọi trước super.onCreate để áp dụng giao diện sáng/tối. */
@@ -69,6 +84,6 @@ final class Prefs {
     /** Khi khóa này thay đổi, Activity cần tạo lại để áp dụng ngôn ngữ hoặc giao diện mới. */
     static String configKey(Context c) {
         SharedPreferences p = get(c);
-        return p.getString(LANG, "") + "|" + isDark(c);
+        return p.getString(LANG, "") + "|" + isDark(c) + "|" + isBlack(c);
     }
 }

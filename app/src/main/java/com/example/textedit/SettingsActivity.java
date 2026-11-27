@@ -8,15 +8,18 @@ import android.content.SharedPreferences;
 import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.graphics.Typeface;
+import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Bundle;
 import android.text.InputType;
 import android.util.TypedValue;
+import android.view.Gravity;
 import android.view.View;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
+import android.widget.SeekBar;
 import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -31,7 +34,10 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 
-/** Màn hình cài đặt: giao diện, font, hình nền, ngôn ngữ, soạn thảo, trình biên dịch online. */
+/**
+ * Màn hình cài đặt, chia ba nhóm: Hiển thị, Trình soạn thảo, Tệp và hệ thống.
+ * Các mục chỉnh cỡ/độ dày dùng thanh trượt kèm nút Xong.
+ */
 public class SettingsActivity extends Activity {
 
     private static final int REQ_FONT = 10;
@@ -40,13 +46,20 @@ public class SettingsActivity extends Activity {
 
     private static final String[] FONT_KEYS = {"monospace", "sans", "serif", "casual", "cursive"};
     private static final String[] FONT_NAMES = {"Monospace", "Sans-serif", "Serif", "Casual", "Cursive"};
-    private static final int[] SIZES = {10, 12, 14, 15, 16, 18, 20, 24, 28, 32};
-    private static final int[] OVERLAYS = {0, 25, 50, 75, 90, 100};
+    private static final String[] THEME_KEYS = {"system", "light", "dark", "amoled"};
+    private static final String[] EOL_KEYS = {"lf", "crlf", "cr"};
+    private static final String[] EOL_NAMES = {"LF (Unix, Android, macOS)", "CRLF (Windows)", "CR (Mac cũ)"};
     private static final int[] PALETTE = {
             0xFF000000, 0xFFFFFFFF, 0xFF424242, 0xFF9E9E9E,
             0xFFE53935, 0xFFFB8C00, 0xFFFDD835, 0xFF43A047,
             0xFF00ACC1, 0xFF1E88E5, 0xFF8E24AA, 0xFFEC407A,
             0xFF6D4C41, 0xFFFFF8E1, 0xFF1B1B2F, 0xFFB3E5FC};
+
+    // Kiểu xem trước bên dưới thanh trượt
+    private static final int PREVIEW_NONE = 0;
+    private static final int PREVIEW_FONT = 1;
+    private static final int PREVIEW_SPACING = 2;
+    private static final int PREVIEW_INDENT = 3;
 
     private interface IntCallback {
         void on(int value);
@@ -56,8 +69,13 @@ public class SettingsActivity extends Activity {
         void on(String value);
     }
 
+    private interface Fmt {
+        String format(int v);
+    }
+
     private SharedPreferences p;
     private LinearLayout list;
+    private boolean black;
 
     @Override
     protected void attachBaseContext(Context base) {
@@ -70,6 +88,11 @@ public class SettingsActivity extends Activity {
         super.onCreate(savedInstanceState);
         setTitle(R.string.action_settings);
         p = Prefs.get(this);
+        black = Prefs.isBlack(this);
+        if (black) {
+            getWindow().setBackgroundDrawable(new ColorDrawable(Color.BLACK));
+            if (getActionBar() != null) getActionBar().setBackgroundDrawable(new ColorDrawable(Color.BLACK));
+        }
         ScrollView sv = new ScrollView(this);
         list = new LinearLayout(this);
         list.setOrientation(LinearLayout.VERTICAL);
@@ -80,23 +103,61 @@ public class SettingsActivity extends Activity {
 
     private void build() {
         list.removeAllViews();
+
+        // ----- Hiển thị -----
+        section(R.string.grp_appearance);
         row(R.string.set_theme, themeName(), 0, v -> pickTheme());
         row(R.string.set_font, fontName(), 0, v -> pickFont());
-        row(R.string.set_font_size, p.getInt(Prefs.FONT_SIZE, 15) + " sp", 0, v -> pickSize());
+        slider(R.string.set_font_size, Prefs.FONT_SIZE, 8, 36, 1, 15, new Fmt() {
+            @Override
+            public String format(int v) {
+                return v + " sp";
+            }
+        }, PREVIEW_FONT);
+        slider(R.string.set_line_spacing, Prefs.LINE_SPACING, 10, 20, 1, 10, new Fmt() {
+            @Override
+            public String format(int v) {
+                return String.format(Locale.US, "%.1fx", v / 10f);
+            }
+        }, PREVIEW_SPACING);
         if (p.contains(Prefs.TEXT_COLOR)) {
             row(R.string.set_text_color, "████", p.getInt(Prefs.TEXT_COLOR, Color.BLACK), v -> pickTextColor());
         } else {
             row(R.string.set_text_color, getString(R.string.color_auto), 0, v -> pickTextColor());
         }
         row(R.string.set_background, bgName(), 0, v -> pickBackground());
-        row(R.string.set_overlay, p.getInt(Prefs.OVERLAY, 0) + "%", 0, v -> pickOverlay());
+        slider(R.string.set_overlay, Prefs.OVERLAY, 0, 100, 5, 0, new Fmt() {
+            @Override
+            public String format(int v) {
+                return v + "%";
+            }
+        }, PREVIEW_NONE);
         row(R.string.set_language, langName(), 0, v -> pickLanguage());
+
+        // ----- Trình soạn thảo -----
+        section(R.string.grp_editor);
         toggle(R.string.set_toolbar, Prefs.TOOLBAR, true);
         toggle(R.string.set_wrap, Prefs.WRAP, true);
         toggle(R.string.set_line_numbers, Prefs.LINES, false);
         toggle(R.string.set_highlight, Prefs.HIGHLIGHT, true);
         toggle(R.string.set_auto_indent, Prefs.AUTOINDENT, true);
-        row(R.string.set_tab_size, p.getInt(Prefs.TAB_SIZE, 4) + "", 0, v -> pickTabSize());
+        toggle(R.string.set_auto_pair, Prefs.AUTOPAIR, true);
+        toggle(R.string.set_show_ws, Prefs.SHOW_WS, false);
+        toggle(R.string.set_tab_spaces, Prefs.TAB_SPACES, true);
+        slider(R.string.set_tab_size, Prefs.TAB_SIZE, 2, 8, 1, 4, new Fmt() {
+            @Override
+            public String format(int v) {
+                return String.valueOf(v);
+            }
+        }, PREVIEW_INDENT);
+        toggle(R.string.set_auto_save, Prefs.AUTOSAVE, false);
+
+        // ----- Tệp và hệ thống -----
+        section(R.string.grp_files);
+        row(R.string.set_default_enc, p.getString(Prefs.DEFAULT_ENC, "UTF-8"), 0, v -> pickDefaultEncoding());
+        row(R.string.set_default_eol, eolName(), 0, v -> pickDefaultEol());
+        toggle(R.string.set_restore, Prefs.RESTORE, true);
+        toggle(R.string.set_root, Prefs.ROOT, false);
         row(R.string.set_compiler_url, p.getString(Prefs.COMPILER_URL, Prefs.DEFAULT_COMPILER), 0,
                 v -> askText(R.string.set_compiler_url, Prefs.COMPILER_URL, Prefs.DEFAULT_COMPILER, false));
         String tok = p.getString(Prefs.COMPILER_TOKEN, "");
@@ -105,86 +166,18 @@ public class SettingsActivity extends Activity {
                 v -> askText(R.string.set_compiler_token, Prefs.COMPILER_TOKEN, "", true));
     }
 
-    // ---------- Giao diện sáng/tối, thụt lề, trình biên dịch ----------
-
-    private static final String[] THEME_KEYS = {"system", "light", "dark"};
-
-    private String themeName() {
-        String t = p.getString(Prefs.THEME, "system");
-        if ("light".equals(t)) return getString(R.string.theme_light);
-        if ("dark".equals(t)) return getString(R.string.theme_dark);
-        return getString(R.string.theme_system);
-    }
-
-    private void pickTheme() {
-        String[] items = {getString(R.string.theme_system), getString(R.string.theme_light),
-                getString(R.string.theme_dark)};
-        new AlertDialog.Builder(this)
-                .setTitle(R.string.set_theme)
-                .setItems(items, (d, which) -> {
-                    p.edit().putString(Prefs.THEME, THEME_KEYS[which]).apply();
-                    recreate();
-                })
-                .show();
-    }
-
-    private void pickTextColor() {
-        String[] items = {getString(R.string.color_auto), getString(R.string.color_choose)};
-        new AlertDialog.Builder(this)
-                .setTitle(R.string.set_text_color)
-                .setItems(items, (d, which) -> {
-                    if (which == 0) {
-                        p.edit().remove(Prefs.TEXT_COLOR).apply();
-                        build();
-                    } else {
-                        colorDialog(R.string.set_text_color, c -> {
-                            p.edit().putInt(Prefs.TEXT_COLOR, c).apply();
-                            build();
-                        });
-                    }
-                })
-                .show();
-    }
-
-    private void pickTabSize() {
-        final int[] sizes = {2, 3, 4, 6, 8};
-        String[] items = new String[sizes.length];
-        for (int i = 0; i < sizes.length; i++) items[i] = String.valueOf(sizes[i]);
-        new AlertDialog.Builder(this)
-                .setTitle(R.string.set_tab_size)
-                .setItems(items, (d, which) -> {
-                    p.edit().putInt(Prefs.TAB_SIZE, sizes[which]).apply();
-                    build();
-                })
-                .show();
-    }
-
-    private void askText(int titleRes, final String key, final String def, boolean secret) {
-        final EditText in = new EditText(this);
-        in.setSingleLine(true);
-        in.setInputType(secret
-                ? InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD
-                : InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
-        in.setText(p.getString(key, def));
-        new AlertDialog.Builder(this)
-                .setTitle(titleRes)
-                .setView(in)
-                .setPositiveButton(android.R.string.ok, (d, w) -> {
-                    String v = in.getText().toString().trim();
-                    if (v.isEmpty()) v = def;
-                    if (key.equals(Prefs.COMPILER_URL) && !v.toLowerCase(Locale.ROOT).startsWith("https://")
-                            && !v.toLowerCase(Locale.ROOT).startsWith("http://")) {
-                        Toast.makeText(this, R.string.compiler_url_invalid, Toast.LENGTH_LONG).show();
-                        return;
-                    }
-                    p.edit().putString(key, v).apply();
-                    build();
-                })
-                .setNegativeButton(R.string.cancel, null)
-                .show();
-    }
-
     // ---------- Dựng giao diện ----------
+
+    private void section(int titleRes) {
+        TextView t = new TextView(this);
+        t.setText(titleRes);
+        t.setAllCaps(true);
+        t.setTypeface(Typeface.DEFAULT_BOLD);
+        t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        t.setTextColor(0xFF1E88E5);
+        t.setPadding(dp(16), dp(22), dp(16), dp(6));
+        list.addView(t);
+    }
 
     private void row(int titleRes, String value, int valueColor, View.OnClickListener click) {
         LinearLayout r = new LinearLayout(this);
@@ -222,6 +215,220 @@ public class SettingsActivity extends Activity {
         list.addView(sw);
     }
 
+    // ---------- Thanh trượt + nút Xong ----------
+
+    private void slider(final int titleRes, final String key, final int min, final int max, final int step,
+                        final int def, final Fmt fmt, final int preview) {
+        final int current = clamp(p.getInt(key, def), min, max);
+        row(titleRes, fmt.format(current), 0, v -> showSlider(titleRes, key, min, max, step, current, fmt, preview));
+    }
+
+    private static int clamp(int v, int lo, int hi) {
+        return Math.max(lo, Math.min(hi, v));
+    }
+
+    private void showSlider(int titleRes, final String key, final int min, final int max, final int step,
+                            int current, final Fmt fmt, final int previewMode) {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(24), dp(16), dp(24), dp(8));
+
+        final TextView value = new TextView(this);
+        value.setTextSize(TypedValue.COMPLEX_UNIT_SP, 28);
+        value.setTypeface(Typeface.DEFAULT_BOLD);
+        value.setGravity(Gravity.CENTER);
+        value.setText(fmt.format(current));
+        box.addView(value);
+
+        final SeekBar bar = new SeekBar(this);
+        bar.setMax((max - min) / step);
+        bar.setProgress((current - min) / step);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        lp.topMargin = dp(12);
+        box.addView(bar, lp);
+
+        final TextView sample = new TextView(this);
+        if (previewMode != PREVIEW_NONE) {
+            sample.setTypeface(previewTypeface());
+            sample.setTextSize(TypedValue.COMPLEX_UNIT_SP, p.getInt(Prefs.FONT_SIZE, 15));
+            sample.setPadding(dp(8), dp(16), dp(8), dp(8));
+            LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+            sp.topMargin = dp(8);
+            box.addView(sample, sp);
+        }
+        updatePreview(sample, previewMode, current);
+
+        bar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar b, int progress, boolean fromUser) {
+                int v = min + progress * step;
+                value.setText(fmt.format(v));
+                updatePreview(sample, previewMode, v);
+            }
+
+            @Override
+            public void onStartTrackingTouch(SeekBar b) { }
+
+            @Override
+            public void onStopTrackingTouch(SeekBar b) { }
+        });
+
+        new AlertDialog.Builder(this)
+                .setTitle(titleRes)
+                .setView(box)
+                .setPositiveButton(R.string.done, (d, w) -> {
+                    int v = min + bar.getProgress() * step;
+                    p.edit().putInt(key, v).apply();
+                    build();
+                })
+                .setNegativeButton(R.string.cancel, null)
+                .show();
+    }
+
+    private void updatePreview(TextView sample, int mode, int v) {
+        switch (mode) {
+            case PREVIEW_FONT:
+                sample.setTextSize(TypedValue.COMPLEX_UNIT_SP, v);
+                sample.setLineSpacing(0f, clamp(p.getInt(Prefs.LINE_SPACING, 10), 10, 20) / 10f);
+                sample.setText(R.string.slider_sample);
+                break;
+            case PREVIEW_SPACING:
+                sample.setLineSpacing(0f, v / 10f);
+                sample.setText(R.string.slider_sample_lines);
+                break;
+            case PREVIEW_INDENT:
+                sample.setTypeface(Typeface.MONOSPACE);
+                StringBuilder pad = new StringBuilder();
+                for (int i = 0; i < v; i++) pad.append(' ');
+                sample.setText("if (x) {\n" + pad + "return 1;\n}");
+                break;
+            default:
+                break;
+        }
+    }
+
+    private Typeface previewTypeface() {
+        String f = p.getString(Prefs.FONT, "monospace");
+        switch (f) {
+            case "sans":
+                return Typeface.SANS_SERIF;
+            case "serif":
+                return Typeface.SERIF;
+            case "casual":
+                return Typeface.create("casual", Typeface.NORMAL);
+            case "cursive":
+                return Typeface.create("cursive", Typeface.NORMAL);
+            case "custom":
+                try {
+                    File file = new File(getFilesDir(), "custom_font");
+                    if (file.exists()) return Typeface.createFromFile(file);
+                } catch (Exception ignored) {
+                    // rơi về monospace
+                }
+                return Typeface.MONOSPACE;
+            default:
+                return Typeface.MONOSPACE;
+        }
+    }
+
+    // ---------- Giao diện sáng/tối, màu chữ ----------
+
+    private String themeName() {
+        String t = p.getString(Prefs.THEME, "system");
+        if ("light".equals(t)) return getString(R.string.theme_light);
+        if ("dark".equals(t)) return getString(R.string.theme_dark);
+        if ("amoled".equals(t)) return getString(R.string.theme_amoled);
+        return getString(R.string.theme_system);
+    }
+
+    private void pickTheme() {
+        String[] items = {getString(R.string.theme_system), getString(R.string.theme_light),
+                getString(R.string.theme_dark), getString(R.string.theme_amoled)};
+        new AlertDialog.Builder(this)
+                .setTitle(R.string.set_theme)
+                .setItems(items, (d, which) -> {
+                    p.edit().putString(Prefs.THEME, THEME_KEYS[which]).apply();
+                    recreate();
+                })
+                .show();
+    }
+
+    private void pickTextColor() {
+        String[] items = {getString(R.string.color_auto), getString(R.string.color_choose)};
+        new AlertDialog.Builder(this)
+                .setTitle(R.string.set_text_color)
+                .setItems(items, (d, which) -> {
+                    if (which == 0) {
+                        p.edit().remove(Prefs.TEXT_COLOR).apply();
+                        build();
+                    } else {
+                        colorDialog(R.string.set_text_color, c -> {
+                            p.edit().putInt(Prefs.TEXT_COLOR, c).apply();
+                            build();
+                        });
+                    }
+                })
+                .show();
+    }
+
+    // ---------- Tệp và hệ thống ----------
+
+    private String eolName() {
+        String k = p.getString(Prefs.DEFAULT_EOL, "lf");
+        for (int i = 0; i < EOL_KEYS.length; i++) {
+            if (EOL_KEYS[i].equals(k)) return EOL_NAMES[i];
+        }
+        return EOL_NAMES[0];
+    }
+
+    private void pickDefaultEol() {
+        new AlertDialog.Builder(this)
+                .setTitle(R.string.set_default_eol)
+                .setItems(EOL_NAMES, (d, which) -> {
+                    p.edit().putString(Prefs.DEFAULT_EOL, EOL_KEYS[which]).apply();
+                    build();
+                })
+                .show();
+    }
+
+    private void pickDefaultEncoding() {
+        final List<String> names = Encodings.choices();
+        new AlertDialog.Builder(this)
+                .setTitle(R.string.set_default_enc)
+                .setItems(names.toArray(new String[0]), (d, which) -> {
+                    p.edit().putString(Prefs.DEFAULT_ENC, names.get(which)).apply();
+                    build();
+                })
+                .show();
+    }
+
+    private void askText(int titleRes, final String key, final String def, boolean secret) {
+        final EditText in = new EditText(this);
+        in.setSingleLine(true);
+        in.setInputType(secret
+                ? InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD
+                : InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
+        in.setText(p.getString(key, def));
+        new AlertDialog.Builder(this)
+                .setTitle(titleRes)
+                .setView(in)
+                .setPositiveButton(R.string.done, (d, w) -> {
+                    String v = in.getText().toString().trim();
+                    if (v.isEmpty()) v = def;
+                    if (key.equals(Prefs.COMPILER_URL) && !v.toLowerCase(Locale.ROOT).startsWith("https://")
+                            && !v.toLowerCase(Locale.ROOT).startsWith("http://")) {
+                        Toast.makeText(this, R.string.compiler_url_invalid, Toast.LENGTH_LONG).show();
+                        return;
+                    }
+                    p.edit().putString(key, v).apply();
+                    build();
+                })
+                .setNegativeButton(R.string.cancel, null)
+                .show();
+    }
+
     // ---------- Font ----------
 
     private String fontName() {
@@ -245,30 +452,6 @@ public class SettingsActivity extends Activity {
                     } else {
                         openPicker("*/*", REQ_FONT);
                     }
-                })
-                .show();
-    }
-
-    private void pickSize() {
-        String[] items = new String[SIZES.length];
-        for (int i = 0; i < SIZES.length; i++) items[i] = SIZES[i] + " sp";
-        new AlertDialog.Builder(this)
-                .setTitle(R.string.set_font_size)
-                .setItems(items, (d, which) -> {
-                    p.edit().putInt(Prefs.FONT_SIZE, SIZES[which]).apply();
-                    build();
-                })
-                .show();
-    }
-
-    private void pickOverlay() {
-        String[] items = new String[OVERLAYS.length];
-        for (int i = 0; i < OVERLAYS.length; i++) items[i] = OVERLAYS[i] + "%";
-        new AlertDialog.Builder(this)
-                .setTitle(R.string.set_overlay)
-                .setItems(items, (d, which) -> {
-                    p.edit().putInt(Prefs.OVERLAY, OVERLAYS[which]).apply();
-                    build();
                 })
                 .show();
     }
@@ -476,7 +659,7 @@ public class SettingsActivity extends Activity {
         final AlertDialog[] dlg = new AlertDialog[1];
         LinearLayout col = new LinearLayout(this);
         col.setOrientation(LinearLayout.VERTICAL);
-        col.setGravity(android.view.Gravity.CENTER_HORIZONTAL);
+        col.setGravity(Gravity.CENTER_HORIZONTAL);
         col.setPadding(dp(12), dp(12), dp(12), dp(4));
         for (int r = 0; r < 4; r++) {
             LinearLayout row = new LinearLayout(this);

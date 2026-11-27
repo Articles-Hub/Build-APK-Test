@@ -1,9 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:id="@+id/root"
+<com.example.textedit.SideDrawer xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/drawer"
     android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:orientation="vertical">
+    android:layout_height="match_parent">
+
+    <LinearLayout
+        android:id="@+id/root"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical">
 
     <HorizontalScrollView
         android:id="@+id/tab_scroll"
@@ -69,6 +74,15 @@
                 android:textOn="Aa" />
 
             <ToggleButton
+                android:id="@+id/tg_word"
+                style="?android:attr/borderlessButtonStyle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:minWidth="40dp"
+                android:textOff="W"
+                android:textOn="W" />
+
+            <ToggleButton
                 android:id="@+id/tg_regex"
                 style="?android:attr/borderlessButtonStyle"
                 android:layout_width="wrap_content"
@@ -76,6 +90,14 @@
                 android:minWidth="40dp"
                 android:textOff=".*"
                 android:textOn=".*" />
+
+            <Button
+                android:id="@+id/btn_expand"
+                style="?android:attr/borderlessButtonStyle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:minWidth="40dp"
+                android:text="⇅" />
 
             <Button
                 android:id="@+id/btn_search_close"
@@ -87,10 +109,12 @@
         </LinearLayout>
 
         <LinearLayout
+            android:id="@+id/replace_row"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:gravity="center_vertical"
-            android:orientation="horizontal">
+            android:orientation="horizontal"
+            android:visibility="gone">
 
             <EditText
                 android:id="@+id/replace_input"
@@ -203,4 +227,18 @@
             android:layout_height="wrap_content"
             android:orientation="horizontal" />
     </HorizontalScrollView>
-</LinearLayout>
+    </LinearLayout>
+
+    <ScrollView
+        android:id="@+id/drawer_panel"
+        android:layout_width="288dp"
+        android:layout_height="match_parent"
+        android:fillViewport="true">
+
+        <LinearLayout
+            android:id="@+id/drawer_list"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical" />
+    </ScrollView>
+</com.example.textedit.SideDrawer>

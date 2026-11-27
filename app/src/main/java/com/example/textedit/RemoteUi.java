@@ -103,6 +103,11 @@ final class RemoteUi {
                 .show();
     }
 
+    /** Bỏ qua bước chọn loại: 0 FTP, 1 FTPS, 2 SFTP, 3 GitHub, 4 GitLab. */
+    static void connect(Activity act, boolean pickFolder, int type, ConnectListener l) {
+        form(act, type, pickFolder, l);
+    }
+
     /** Bước 2: nhập thông tin kết nối. */
     private static void form(final Activity act, final int type, final boolean pickFolder, final ConnectListener l) {
         final SharedPreferences p = Prefs.get(act);
